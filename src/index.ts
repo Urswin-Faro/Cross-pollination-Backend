@@ -45,7 +45,7 @@ const io = new Server(httpServer, {
   }
 });
 
-// 1. Redefine the memory pool structure to accept profile data objects
+// ✅ FIXED: Explicitly typed structure to satisfy the TypeScript compiler
 let waitingPool: { socketId: string; userProfile: any }[] = [];
 
 io.on('connection', (socket) => {
@@ -64,6 +64,7 @@ io.on('connection', (socket) => {
 
     // Matchmaking Check
     if (waitingPool.length >= 2) {
+      // Added explicit non-null assertion (!) so TS knows these won't be undefined
       const peer1 = waitingPool.shift()!;
       const peer2 = waitingPool.shift()!;
       const uniqueRoomId = `room_${peer1.socketId}_${peer2.socketId}`;
@@ -84,14 +85,39 @@ io.on('connection', (socket) => {
     }
   });
 
+  // 🔥 FIXED PATH: Prevent ghost matches by clearing users who manually cancel their search
+  socket.on('leave_pool', () => {
+    waitingPool = waitingPool.filter(p => p.socketId !== socket.id);
+    console.log(`👤 User manually backed out of matchmaking pool: ${socket.id}. Size: ${waitingPool.length}`);
+  });
+
   // Relay chat text message transmissions (Keep this exactly how it was)
   socket.on('send_message', ({ roomId, message, senderName }) => {
     socket.to(roomId).emit('receive_message', { message, senderName });
   });
 
+  // ==========================================
+  // 🎥 FIXED: WEBRTC SIGNALLING ROUTE RELAYS
+  // ==========================================
+
+  // 1. Pass SDP WebRTC Offers to the target peer
+  socket.on('video_offer', ({ roomId, sdp }) => {
+    socket.to(roomId).emit('video_offer', { sdp });
+  });
+
+  // 2. Pass SDP WebRTC Answers back to the caller
+  socket.on('video_answer', ({ roomId, sdp }) => {
+    socket.to(roomId).emit('video_answer', { sdp });
+  });
+
+  // 3. Pass NAT/Firewall hole-punching candidates between both peers
+  socket.on('ice_candidate', ({ roomId, candidate }) => {
+    socket.to(roomId).emit('ice_candidate', { candidate });
+  });
+
   socket.on('disconnect', () => {
     waitingPool = waitingPool.filter(p => p.socketId !== socket.id);
-    console.log(`❌ User disconnected: ${socket.id}`);
+    console.log(`❌ User disconnected: ${socket.id}. Size: ${waitingPool.length}`);
   });
 });
 
